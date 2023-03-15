@@ -18,7 +18,6 @@ from torchaudio.transforms import MelSpectrogram
 from tqdm import tqdm
 from sklearn.metrics import confusion_matrix
 
-from DictClass import DictClass
 from mvector.models.ecapa_tdnn import EcapaTdnn, SpeakerIdetification
 from mvector.data_utils.collate_fn import collate_fn
 from mvector.data_utils.utils import make_pad_mask
@@ -31,16 +30,8 @@ logger = setup_logger(__name__)
 class MelSpectrogramFeaturizer(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.feature_config = DictClass({
-            "sample_rate": 16000,
-            "n_fft": 1024,
-            "hop_length": 320,
-            "win_length": 1024,
-            "f_min": 0,
-            "f_max": 16000,
-            "n_mels": 64
-        })
-        self.extractor = MelSpectrogram(**self.feature_config)
+        self.extractor = MelSpectrogram(sample_rate=16000, n_fft=1024, hop_length=320, win_length=1024, f_min=0,
+                                        f_max=16000, n_mels=64)
 
     def forward(self, waveforms, input_lens_ratio):
         """从AudioSegment中提取音频特征
@@ -71,7 +62,7 @@ class MelSpectrogramFeaturizer(torch.nn.Module):
         :return: 特征大小
         :rtype: int
         """
-        return self.feature_config.n_mels
+        return 64
 
 
 class VoiceDataset(Dataset):
@@ -79,47 +70,46 @@ class VoiceDataset(Dataset):
         super(VoiceDataset, self).__init__()
         self.mode = mode
         self.data_list_path = data_list_path
-        self.dataset_config = DictClass({
-            "sample_rate": 16000,
-            "do_vad": True,
-            "chunk_duration": 3,
-            "min_duration": 0.5,
-            "normalize_db": True,
-            "target_db": -20,
-        })
-        self.min_chunk_samples = int(self.dataset_config.chunk_duration * self.dataset_config.sample_rate)
+        self.SAMPLE_RATE = 16000
+        self.CHUNK_DURATION = 3
+        self.MIN_DURATION = 0.5
+        self.NORMALIZE_DB = True
+        self.TARGET_DB = -20
+        self.DO_VAD = True
+
         with open(data_list_path, 'r') as f:
             self.data_list = f.readlines()
+        self.min_samples = int(self.MIN_DURATION * self.SAMPLE_RATE)
+        self.min_chunk_samples = int(self.CHUNK_DURATION * self.SAMPLE_RATE)
 
     def __getitem__(self, index):
         # 解析出音频路径和说话人标签
-        audio_path, speaker_label = self.data_list[index].replace("\n", "").split('\t')
+        audio_path, speaker_label = self.data_list[index].replace('\n', '').split('\t')
         # 读取音频
         audio_segment = AudioSegment.from_file(audio_path)
         # 裁剪静音
-        if self.dataset_config.do_vad:
+        if self.DO_VAD:
             audio_segment.vad()
-        if self.mode == 'train' and audio_segment.num_samples < int(
-                self.dataset_config.min_duration * self.dataset_config.sample_rate):
+        if self.mode == 'train' and audio_segment.num_samples < self.min_samples:
             return self.__getitem__(index + 1 if index + 1 < len(self.data_list) else 0)
         # 重采样
         pass
         # 平衡响度
-        if self.dataset_config.normalize_db:
-            audio_segment.normalize(target_db=self.dataset_config.target_db)
+        if self.NORMALIZE_DB:
+            audio_segment.normalize(target_db=self.TARGET_DB)
         # 数据增强
         # 随机修改响度
-        if random.random() < 0.5:
-            # "min_gain_dBFS": -15,
-            # "max_gain_dBFS": 15
-            gain = random.uniform(-15, 15)
-            audio_segment.gain_db(gain)
+        # if random.random() < 0.5:
+        #     # "min_gain_dBFS": -15,
+        #     # "max_gain_dBFS": 15
+        #     gain = random.uniform(-15, 15)
+        #     audio_segment.gain_db(gain)
         # 不足长度不够的音频
         if audio_segment.num_samples < self.min_chunk_samples:
             shortage = self.min_chunk_samples - audio_segment.num_samples
             audio_segment.pad_silence(duration=float(shortage / audio_segment.sample_rate * 1.1), sides='end')
         # 裁剪需要的数据
-        audio_segment.crop(duration=self.dataset_config.chunk_duration, mode=self.mode)
+        audio_segment.crop(duration=self.CHUNK_DURATION, mode=self.mode)
         return np.array(audio_segment.samples, dtype=np.float32), np.array(int(speaker_label), dtype=np.int64)
 
     def __len__(self):
@@ -176,20 +166,26 @@ class AAMLoss(torch.nn.Module):
 
 class Trainer:
     def __init__(self):
-        self.MAX_EPOCH = 15
         self.BATCH_SIZE = 80
-        self.LOG_INTERVAL = 80
-        self.NUM_WORKERS = 16
-        self.EMBD_DIM = 192
-        self.CHANNELS = 512
         self.NUM_SPEAKERS = 420
+        self.NUM_WORKERS = 16
         self.TRAIN_LIST = 'dataset/train_list.txt'
         self.TEST_LIST = 'dataset/test_list.txt'
+
+        self.FEATURE_METHOD = 'MelSpectrogram'
+
         self.LEARNING_RATE = 0.001
         self.WEIGHT_DECAY = 1e-6
-        self.SAVE_MODEL_PATH = 'models/'
+
+        self.EMBD_DIM = 192
+        self.CHANNELS = 512
+
+        self.MAX_EPOCH = 30
+        self.LOG_INTERVAL = 80
+
         self.USE_MODEL = 'ecapa_tdnn'
-        self.FEATURE_METHOD = 'MelSpectrogram'
+
+        self.SAVE_MODEL_PATH = 'models/'
 
         if platform.system().lower() == 'windows':
             self.NUM_WORKERS = 0
@@ -204,12 +200,30 @@ class Trainer:
 
         # 获取训练数据
         self.train_dataset = VoiceDataset(data_list_path=self.TRAIN_LIST, mode='train')
-        self.train_loader = DataLoader(self.train_dataset, collate_fn=collate_fn, shuffle=False,
+        # self.train_dataset = CustomDataset(data_list_path=self.TRAIN_LIST,
+        #                                    do_vad=True,
+        #                                    chunk_duration=3,
+        #                                    min_duration=0.5,
+        #                                    augmentation_config=open('configs/augmentation.json', 'r',
+        #                                                             encoding='utf8').read(),
+        #                                    sample_rate=16000,
+        #                                    use_dB_normalization=True,
+        #                                    target_dB=-20,
+        #                                    mode='train')
+        self.train_loader = DataLoader(self.train_dataset, collate_fn=collate_fn, shuffle=True,
                                        batch_size=self.BATCH_SIZE,
                                        sampler=None, num_workers=self.NUM_WORKERS)
 
         # 获取测试数据
         self.test_dataset = VoiceDataset(data_list_path=self.TEST_LIST, mode='test')
+        # self.test_dataset = CustomDataset(data_list_path=self.TEST_LIST,
+        #                                   do_vad=True,
+        #                                   chunk_duration=3,
+        #                                   min_duration=0.5,
+        #                                   sample_rate=16000,
+        #                                   use_dB_normalization=True,
+        #                                   target_dB=-20,
+        #                                   mode='eval')
         self.test_loader = DataLoader(self.test_dataset, collate_fn=collate_fn, batch_size=self.BATCH_SIZE,
                                       num_workers=self.NUM_WORKERS)
         # 获取模型
@@ -224,7 +238,7 @@ class Trainer:
 
         # 获取优化方法(AdamW)
         self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=float(self.LEARNING_RATE),
-                                           weight_decay=self.WEIGHT_DECAY)
+                                          weight_decay=float(self.WEIGHT_DECAY))
         # 学习率衰减函数
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=int(self.MAX_EPOCH * 1.2))
 
@@ -299,7 +313,6 @@ class Trainer:
                 # if batch_id % 10000 == 0 and batch_id != 0 and local_rank == 0:
                 #     self.save_checkpoint(save_model_path=save_model_path, epoch_id=epoch_id)
                 start = time.time()
-
             self.scheduler.step()
             logger.info('=' * 70)
             loss, accuracy, precision, recall, f1_score = self.evaluate()
@@ -325,7 +338,8 @@ class Trainer:
             with open(os.path.join(model_path, 'model.state'), 'w', encoding='utf-8') as f:
                 f.write('{"last_epoch": %d, "accuracy": %f}' % (epoch_id, best_accuracy))
             # 复制一份最后一次模型
-            last_model_path = os.path.join(self.SAVE_MODEL_PATH, f'{self.USE_MODEL}_{self.FEATURE_METHOD}', 'last_model')
+            last_model_path = os.path.join(self.SAVE_MODEL_PATH, f'{self.USE_MODEL}_{self.FEATURE_METHOD}',
+                                           'last_model')
             shutil.rmtree(last_model_path, ignore_errors=True)
             shutil.copytree(model_path, last_model_path)
             # 删除旧的模型，保留最后三份
