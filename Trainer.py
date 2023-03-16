@@ -6,6 +6,7 @@ import random
 import shutil
 import time
 from datetime import timedelta
+from typing import Union
 
 import numpy as np
 import torch
@@ -66,10 +67,8 @@ class MelSpectrogramFeaturizer(torch.nn.Module):
 
 
 class VoiceDataset(Dataset):
-    def __init__(self, data_list_path, mode='train'):
+    def __init__(self, epoch_id, mode='train'):
         super(VoiceDataset, self).__init__()
-        self.mode = mode
-        self.data_list_path = data_list_path
         self.SAMPLE_RATE = 16000
         self.CHUNK_DURATION = 3
         self.MIN_DURATION = 0.5
@@ -77,14 +76,34 @@ class VoiceDataset(Dataset):
         self.TARGET_DB = -20
         self.DO_VAD = True
 
-        with open(data_list_path, 'r') as f:
-            self.data_list = f.readlines()
         self.min_samples = int(self.MIN_DURATION * self.SAMPLE_RATE)
         self.min_chunk_samples = int(self.CHUNK_DURATION * self.SAMPLE_RATE)
+        self.mode = mode
+        self.epoch_id = epoch_id
+        self.data_list: list[list[str, int]] = []
+
+        data = json.load(open('dataset/data.json', 'r', encoding='utf-8'))
+
+        i1 = (epoch_id % 10) / 10
+        i2 = (epoch_id % 10 + 2) / 10
+        for i in data['sounds'].keys():
+            c = data['sounds'][i]['sounds_count']
+            c1 = math.ceil(c * i1)
+            c2 = math.ceil(c * i2)
+            train_list = [[sound, i] for sound in data['sounds'][i]['sounds'][0:c1]] + \
+                         [[sound, i] for sound in data['sounds'][i]['sounds'][c2:c]]
+            test_list = [[sound, i] for sound in data['sounds'][i]['sounds'][c1:c2]]
+            assert len(train_list) + len(test_list) == c, \
+                "!!数据集划分不完整 epoch: %d, speaker: %s, count: %d, train: %d, test: %d!!" % \
+                (epoch_id, data['speakers'][i], c, len(train_list), len(test_list))
+            if mode == 'train':
+                self.data_list.extend(train_list)
+            elif mode == 'test':
+                self.data_list.extend(test_list)
 
     def __getitem__(self, index):
         # 解析出音频路径和说话人标签
-        audio_path, speaker_label = self.data_list[index].replace('\n', '').split('\t')
+        [audio_path, speaker_label] = self.data_list[index]
         # 读取音频
         audio_segment = AudioSegment.from_file(audio_path)
         # 裁剪静音
@@ -167,7 +186,7 @@ class AAMLoss(torch.nn.Module):
 class Trainer:
     def __init__(self):
         self.BATCH_SIZE = 80
-        self.NUM_SPEAKERS = 420
+        self.NUM_SPEAKERS = 600
         self.NUM_WORKERS = 16
         self.TRAIN_LIST = 'dataset/train_list.txt'
         self.TEST_LIST = 'dataset/test_list.txt'
@@ -198,34 +217,6 @@ class Trainer:
         self.audio_featurizer = MelSpectrogramFeaturizer()
         self.audio_featurizer.to(self.device)
 
-        # 获取训练数据
-        self.train_dataset = VoiceDataset(data_list_path=self.TRAIN_LIST, mode='train')
-        # self.train_dataset = CustomDataset(data_list_path=self.TRAIN_LIST,
-        #                                    do_vad=True,
-        #                                    chunk_duration=3,
-        #                                    min_duration=0.5,
-        #                                    augmentation_config=open('configs/augmentation.json', 'r',
-        #                                                             encoding='utf8').read(),
-        #                                    sample_rate=16000,
-        #                                    use_dB_normalization=True,
-        #                                    target_dB=-20,
-        #                                    mode='train')
-        self.train_loader = DataLoader(self.train_dataset, collate_fn=collate_fn, shuffle=True,
-                                       batch_size=self.BATCH_SIZE,
-                                       sampler=None, num_workers=self.NUM_WORKERS)
-
-        # 获取测试数据
-        self.test_dataset = VoiceDataset(data_list_path=self.TEST_LIST, mode='test')
-        # self.test_dataset = CustomDataset(data_list_path=self.TEST_LIST,
-        #                                   do_vad=True,
-        #                                   chunk_duration=3,
-        #                                   min_duration=0.5,
-        #                                   sample_rate=16000,
-        #                                   use_dB_normalization=True,
-        #                                   target_dB=-20,
-        #                                   mode='eval')
-        self.test_loader = DataLoader(self.test_dataset, collate_fn=collate_fn, batch_size=self.BATCH_SIZE,
-                                      num_workers=self.NUM_WORKERS)
         # 获取模型
         self.ecapa_tdnn = EcapaTdnn(input_size=self.audio_featurizer.feature_dim, embd_dim=self.EMBD_DIM,
                                     channels=self.CHANNELS)
@@ -238,9 +229,13 @@ class Trainer:
 
         # 获取优化方法(AdamW)
         self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=float(self.LEARNING_RATE),
-                                          weight_decay=float(self.WEIGHT_DECAY))
+                                           weight_decay=float(self.WEIGHT_DECAY))
         # 学习率衰减函数
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=int(self.MAX_EPOCH * 1.2))
+
+        # 声明变量
+        self.train_loader = None
+        self.test_loader = None
 
     def train(self, resume_model=None):
         last_epoch = -1
@@ -265,6 +260,16 @@ class Trainer:
         test_step, train_step = 0, 0
         last_epoch += 1
         for epoch_id in range(last_epoch, self.MAX_EPOCH):
+            # 获取训练数据
+            train_dataset = VoiceDataset(epoch_id=epoch_id, mode='train')
+            self.train_loader = DataLoader(train_dataset, collate_fn=collate_fn, shuffle=True,
+                                           batch_size=self.BATCH_SIZE,
+                                           sampler=None, num_workers=self.NUM_WORKERS)
+
+            # 获取测试数据
+            test_dataset = VoiceDataset(epoch_id=epoch_id, mode='test')
+            self.test_loader = DataLoader(test_dataset, collate_fn=collate_fn, batch_size=self.BATCH_SIZE,
+                                          num_workers=self.NUM_WORKERS)
             epoch_id += 1
             start_epoch = time.time()
             # 训练一个epoch
@@ -394,4 +399,5 @@ class Trainer:
 
 if __name__ == '__main__':
     trainer = Trainer()
+    # trainer.train(resume_model='models/ecapa_tdnn_MelSpectrogram/best_model')
     trainer.train()
