@@ -31,7 +31,7 @@ for folder in folders:
                 continue
             sounds += 1
             files[speakers[label.name]]["sounds_count"] += 1
-            files[speakers[label.name]]["sounds"].append(audio.path)
+            files[speakers[label.name]]["sounds"].append(audio.path.replace("\\", "/"))
 print('::total speakers: %d\n::total sounds: %d' % (len(speakers), sounds))
 data = {
     "total_speakers": len(speakers),
