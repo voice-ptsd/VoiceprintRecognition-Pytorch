@@ -199,7 +199,7 @@ class Trainer:
         self.EMBD_DIM = 192
         self.CHANNELS = 512
 
-        self.MAX_EPOCH = 30
+        self.MAX_EPOCH = 120
         self.LOG_INTERVAL = 80
 
         self.USE_MODEL = 'ecapa_tdnn'
@@ -237,9 +237,27 @@ class Trainer:
         self.train_loader = None
         self.test_loader = None
 
-    def train(self, resume_model=None):
+    def train(self, resume_model=None, pretrained_model=None):
+        # 加载预训练模型
+        if pretrained_model is not None:
+            assert os.path.exists(os.path.join(pretrained_model, 'model.pt')), "模型参数文件不存在！"
+            model_dict = self.model.state_dict()
+            model_state_dict = torch.load(os.path.join(pretrained_model, 'model.pt'))
+            # 过滤不存在的参数
+            for name, weight in model_dict.items():
+                if name in model_state_dict.keys():
+                    if list(weight.shape) != list(model_state_dict[name].shape):
+                        logger.warning('{} not used, shape {} unmatched with {} in model.'.
+                                       format(name, list(model_state_dict[name].shape), list(weight.shape)))
+                        model_state_dict.pop(name, None)
+                else:
+                    logger.warning('Lack weight: {}'.format(name))
+            self.model.load_state_dict(model_state_dict, strict=False)
+            logger.info('成功加载预训练模型：{}'.format(pretrained_model))
+
         last_epoch = -1
         best_accuracy = 0
+
         # 恢复训练
         if resume_model is not None:
             assert os.path.exists(os.path.join(resume_model, 'model.pt')), "模型参数文件不存在！"
@@ -400,4 +418,4 @@ class Trainer:
 if __name__ == '__main__':
     trainer = Trainer()
     # trainer.train(resume_model='models/ecapa_tdnn_MelSpectrogram/best_model')
-    trainer.train()
+    trainer.train(pretrained_model='models/ecapa_tdnn_MelSpectrogram_30epoch/last_model')
