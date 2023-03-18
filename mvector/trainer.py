@@ -439,7 +439,7 @@ class MVectorTrainer(object):
         recall = TP / (TP + FN + 1e-6)
         f1_score = (2 * precision * recall) / (precision + recall + 1e-12)
         if not cal_threshold:
-            return loss, acc, precision, recall, f1_score
+            return loss, acc, np.mean(precision), np.mean(recall), np.mean(f1_score)
 
         metric = TprAtFpr()
         labels = labels.astype(np.int32)
