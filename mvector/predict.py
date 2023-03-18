@@ -10,7 +10,11 @@ from tqdm import tqdm
 from mvector import SUPPORT_MODEL
 from mvector.data_utils.audio import AudioSegment
 from mvector.data_utils.featurizer import AudioFeaturizer
-from mvector.models.ecapa_tdnn import EcapaTdnn, SpeakerIdetification
+from mvector.models.ecapa_tdnn import EcapaTdnn
+from mvector.models.fc import SpeakerIdetification
+from mvector.models.res2net import Res2Net
+from mvector.models.resnet_se import ResNetSE
+from mvector.models.tdnn import TDNN
 from mvector.utils.logger import setup_logger
 from mvector.utils.utils import dict_to_object, print_arguments
 
@@ -51,11 +55,17 @@ class MVectorPredictor:
         self._audio_featurizer = AudioFeaturizer(feature_conf=self.configs.feature_conf, **self.configs.preprocess_conf)
         self._audio_featurizer.to(self.device)
         # 获取模型
-        if self.configs.use_model == 'ecapa_tdnn':
-            ecapa_tdnn = EcapaTdnn(input_size=self._audio_featurizer.feature_dim, **self.configs.model_conf)
-            model = SpeakerIdetification(backbone=ecapa_tdnn, num_class=self.configs.dataset_conf.num_speakers)
+        if self.configs.use_model == 'EcapaTdnn' or self.configs.use_model == 'ecapa_tdnn':
+            backbone = EcapaTdnn(input_size=self._audio_featurizer.feature_dim, **self.configs.model_conf)
+        elif self.configs.use_model == 'Res2Net':
+            backbone = Res2Net(input_size=self._audio_featurizer.feature_dim, **self.configs.model_conf)
+        elif self.configs.use_model == 'ResNetSE':
+            backbone = ResNetSE(input_size=self._audio_featurizer.feature_dim, **self.configs.model_conf)
+        elif self.configs.use_model == 'TDNN':
+            backbone = TDNN(input_size=self._audio_featurizer.feature_dim, **self.configs.model_conf)
         else:
             raise Exception(f'{self.configs.use_model} 模型不存在！')
+        model = SpeakerIdetification(backbone=backbone, num_class=self.configs.dataset_conf.num_speakers)
         model.to(self.device)
         # 加载模型
         if os.path.isdir(model_path):

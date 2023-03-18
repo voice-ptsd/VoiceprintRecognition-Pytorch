@@ -9,3 +9,4 @@ models/
 dataset/
 audio_db/
 models.tar.gz
+output/
