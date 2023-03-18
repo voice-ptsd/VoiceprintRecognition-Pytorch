@@ -1,14 +1,14 @@
 import json
 import os
-from typing import Union
+from typing import Union, Dict, List
 
-folders: list[str] = [
+folders: List[str] = [
     "dataset/aidatatang_200zh/corpus/train",
     "dataset/aidatatang_200zh/corpus/dev",
     "dataset/aidatatang_200zh/corpus/test",
 ]
-files: dict[int, dict[str, Union[int, list]]] = {}
-speakers: dict = {}
+files: Dict[int, Dict[str, Union[int, List]]] = {}
+speakers: Dict = {}
 sounds: int = 0
 
 label: os.DirEntry
