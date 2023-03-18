@@ -11,4 +11,5 @@ torchaudio>=0.12.1
 torchinfo>=1.7.2
 pyaudio~=0.2.13
 ffmpeg~=1.4
-setuptools~=66.1.1
+setuptools~=65.6.3
+soundfile~=0.12.1
