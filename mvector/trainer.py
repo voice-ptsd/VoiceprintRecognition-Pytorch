@@ -37,7 +37,7 @@ logger = setup_logger(__name__)
 
 class MVectorTrainer(object):
     def __init__(self, configs, use_gpu=True):
-        """ ppvector集成工具类
+        """ mvector集成工具类
 
         :param configs: 配置字典
         :param use_gpu: 是否使用GPU训练模型
@@ -469,6 +469,7 @@ class MVectorTrainer(object):
             # 保存图像
             os.makedirs(save_image_path, exist_ok=True)
             plt.savefig(os.path.join(save_image_path, 'result.png'))
+            logger.info(f"结果图以保存在：{os.path.join(save_image_path, 'result.png')}")
         return tpr, fpr, eer, threshold
 
     def export(self, save_model_path='models/', resume_model='models/ecapa_tdnn_MelSpectrogram/best_model/'):
