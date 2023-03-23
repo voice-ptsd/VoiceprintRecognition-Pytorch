@@ -161,6 +161,11 @@ class MVectorPredictor:
         for feature in np_feature:
             similarity = cosine_similarity(self.audio_feature, feature.reshape(1, -1)).squeeze()
             abs_similarity = np.abs(similarity)
+
+            idx = np.argpartition(abs_similarity, -self.cdd_num)[-self.cdd_num:]
+            print(list(zip(idx, list(np.array(self.users_name)[idx]), abs_similarity[idx])))
+            self.cdd_num = 1
+
             # 获取候选索引
             if len(abs_similarity) < self.cdd_num:
                 candidate_idx = np.argpartition(abs_similarity, -len(abs_similarity))[-len(abs_similarity):]
@@ -169,6 +174,9 @@ class MVectorPredictor:
             # 过滤低于阈值的索引
             remove_idx = np.where(abs_similarity[candidate_idx] < self.threshold)
             candidate_idx = np.delete(candidate_idx, remove_idx)
+
+            print(list(zip(candidate_idx, list(np.array(self.users_name)[candidate_idx]), abs_similarity[candidate_idx])))
+
             # 获取标签最多的值
             candidate_label_list = list(np.array(self.users_name)[candidate_idx])
             if len(candidate_label_list) == 0:

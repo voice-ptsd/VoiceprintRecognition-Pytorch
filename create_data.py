@@ -1,55 +1,96 @@
 import json
-import math
 import os
-from typing import Union, Dict, List
+import time
+from multiprocessing import Pool, cpu_count
+from datetime import timedelta
 
-folders: List[str] = [
-    "dataset/aidatatang_200zh/corpus/train",
-    "dataset/aidatatang_200zh/corpus/dev",
-    "dataset/aidatatang_200zh/corpus/test",
-]
-files: Dict[int, Dict[str, Union[int, List]]] = {}
-speakers: Dict = {}
-sounds: int = 0
+from pydub import AudioSegment
 
-label: os.DirEntry
-audio: os.DirEntry
 
-train_file = open("dataset/train_list.txt", "w", encoding="utf-8")
-test_file = open("dataset/test_list.txt", "w", encoding="utf-8")
+# 生成数据列表
+def get_data_list(infodata_path, zhvoice_path):
+    print('正在读取标注文件...')
+    with open(infodata_path, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
 
-for folder in folders:
-    for label in os.scandir(folder):
-        if not label.is_dir():
+    data = []
+    speakers = []
+    speakers_dict = {}
+    for line in lines:
+        line = json.loads(line.replace('\n', ''))
+        duration_ms = line['duration_ms']
+        if duration_ms < 1300:
             continue
-        # 新的说话人创建映射
-        if label.name not in speakers:
-            speakers[label.name] = len(speakers)
-        if speakers[label.name] not in files:
-            files[speakers[label.name]] = {
-                "sounds_count": 0,
-                "sounds": [],
-            }
-        for audio in os.scandir(label):
-            if not audio.name.endswith(".wav"):
-                continue
-            sounds += 1
-            files[speakers[label.name]]["sounds_count"] += 1
-            files[speakers[label.name]]["sounds"].append(audio.path.replace("\\", "/"))
-print('::total speakers: %d\n::total sounds: %d' % (len(speakers), sounds))
-data = {
-    "total_speakers": len(speakers),
-    "total_sounds": sounds,
-    "speakers": {**speakers, **{value: key for key, value in speakers.items()}},
-    "sounds": files,
-}
-json.dump(data, open("dataset/data.json", "w", encoding="utf-8"), indent=4)
+        speaker = line['speaker']
+        if speaker not in speakers:
+            speakers_dict[speaker] = len(speakers)
+            speakers.append(speaker)
+        label = speakers_dict[speaker]
+        sound_path = os.path.join(zhvoice_path, line['index'])
+        data.append([sound_path.replace('\\', '/'), label])
+    print(f'一共有{len(data)}条数据！')
+    return data
 
-for i in data['sounds'].keys():
-    s = math.ceil(data['sounds'][i]['sounds_count'] * 0.8)
-    for sound in data['sounds'][i]['sounds'][0:s]:
-        train_file.write("%s\t%d\n" % (sound, i))
-    for sound in data['sounds'][i]['sounds'][s:]:
-        test_file.write("%s\t%d\n" % (sound, i))
-train_file.close()
-test_file.close()
+
+def mp32wav(num, data_list):
+    start = time.time()
+    for i, data in enumerate(data_list):
+        sound_path, label = data
+        if os.path.exists(sound_path):
+            save_path = sound_path.replace('.mp3', '.wav')
+            if not os.path.exists(save_path):
+                wav = AudioSegment.from_mp3(sound_path)
+                wav.export(save_path, format="wav")
+                os.remove(sound_path)
+        if i % 100 == 0:
+            eta_sec = ((time.time() - start) / 100 * (len(data_list) - i))
+            start = time.time()
+            eta_str = str(timedelta(seconds=int(eta_sec)))
+            print(f'进程{num}进度：[{i}/{len(data_list)}]，剩余时间：{eta_str}')
+
+
+def split_data(list_temp, n):
+    length = len(list_temp) // n
+    for i in range(0, len(list_temp), length):
+        yield list_temp[i:i + length]
+
+
+def main(infodata_path, list_path, zhvoice_path, to_wav=True, num_workers=2):
+    data_all = []
+    data = get_data_list(infodata_path=infodata_path, zhvoice_path=zhvoice_path)
+    if to_wav:
+        print('准备把MP3总成WAV格式...')
+        split_d = split_data(data, num_workers)
+        pool = Pool(num_workers)
+        for i, d in enumerate(split_d):
+            pool.apply_async(mp32wav, (i, d))
+        pool.close()
+        pool.join()
+        for d in data:
+            sound_path, label = d
+            sound_path = sound_path.replace('.mp3', '.wav')
+            if os.path.exists(sound_path):
+                data_all.append([sound_path, label])
+    else:
+        for d in data:
+            sound_path, label = d
+            if os.path.exists(sound_path):
+                data_all.append(d)
+    f_train = open(os.path.join(list_path, 'train_list.txt'), 'w')
+    f_test = open(os.path.join(list_path, 'test_list.txt'), 'w')
+    for i, d in enumerate(data_all):
+        sound_path, label = d
+        if i % 200 == 0:
+            f_test.write(f'{sound_path}\t{label}\n')
+        else:
+            f_train.write(f'{sound_path}\t{label}\n')
+    f_test.close()
+    f_train.close()
+
+
+if __name__ == '__main__':
+    main(infodata_path='dataset/zhvoice/text/infodata.json',
+         list_path='dataset',
+         zhvoice_path='dataset/zhvoice',
+         to_wav=True,
+         num_workers=cpu_count())
