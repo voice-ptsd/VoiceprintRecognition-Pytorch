@@ -166,8 +166,7 @@ class MVectorPredictor:
             print(list(zip(idx_all, list(np.array(self.users_name)[idx_all]), abs_similarity[idx_all])))
             print("-----------------------------------")
             print("前五候选相似度：")
-            idx = np.argpartition(abs_similarity, -self.cdd_num)[-self.cdd_num:]
-            print(list(zip(idx, list(np.array(self.users_name)[idx]), abs_similarity[idx])))
+            print(list(zip(idx_all[-5:], list(np.array(self.users_name)[idx_all[-5:]]), abs_similarity[idx_all[-5:]])))
             print("-----------------------------------")
             print("过滤阈值后最高相似度：")
             self.cdd_num = 1
