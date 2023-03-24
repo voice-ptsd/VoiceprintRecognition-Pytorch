@@ -161,9 +161,15 @@ class MVectorPredictor:
         for feature in np_feature:
             similarity = cosine_similarity(self.audio_feature, feature.reshape(1, -1)).squeeze()
             abs_similarity = np.abs(similarity)
-
+            print("全体相似度：")
+            idx_all = np.argpartition(abs_similarity, -len(abs_similarity))[-len(abs_similarity):]
+            print(list(zip(idx_all, list(np.array(self.users_name)[idx_all]), abs_similarity[idx_all])))
+            print("-----------------------------------")
+            print("前五候选相似度：")
             idx = np.argpartition(abs_similarity, -self.cdd_num)[-self.cdd_num:]
             print(list(zip(idx, list(np.array(self.users_name)[idx]), abs_similarity[idx])))
+            print("-----------------------------------")
+            print("过滤阈值后最高相似度：")
             self.cdd_num = 1
 
             # 获取候选索引
