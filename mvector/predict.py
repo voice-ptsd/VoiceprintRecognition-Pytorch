@@ -1,6 +1,5 @@
 import os
-import pickle
-
+import json
 import numpy as np
 import torch
 import yaml
@@ -89,31 +88,33 @@ class MVectorPredictor:
         # 加载声纹库
         self.audio_db_path = audio_db_path
         if self.audio_db_path is not None:
+            self.audio_indexes_path_json = os.path.join(audio_db_path, "audio_indexes.json")
             self.audio_indexes_path = os.path.join(audio_db_path, "audio_indexes.bin")
             # 加载声纹库中的声纹
             self.__load_faces(self.audio_db_path)
+            # self.__load_faces_json(self.audio_db_path)
 
-    # 加载声纹特征索引
-    def __load_face_indexes(self):
-        # 如果存在声纹特征索引文件就加载
-        if not os.path.exists(self.audio_indexes_path): return
-        with open(self.audio_indexes_path, "rb") as f:
-            indexes = pickle.load(f)
+
+    def __load_face_indexed_json(self):
+        # 如果存在声纹特征索引json文件就加载
+        if not os.path.exists(self.audio_indexes_path_json): return
+        with open(self.audio_indexes_path_json, "r", encoding='utf-8') as f:
+            indexes = json.load(f)
         self.users_name = indexes["users_name"]
         self.audio_feature = indexes["faces_feature"]
         self.users_audio_path = indexes["users_image_path"]
 
     # 保存声纹特征索引
-    def __write_index(self):
-        with open(self.audio_indexes_path, "wb") as f:
-            pickle.dump({"users_name": self.users_name,
-                         "faces_feature": self.audio_feature,
-                         "users_image_path": self.users_audio_path}, f)
+    def __write_index_json(self):
+      with open(self.audio_indexes_path_json, "w", encoding='utf-8') as f:
+            json.dump({"users_name": self.users_name,
+                         "faces_feature": self.audio_feature.tolist(),
+                         "users_image_path": self.users_audio_path}, f , ensure_ascii=False)
 
     # 加载声纹库中的声纹
     def __load_faces(self, audio_db_path):
         # 先加载声纹特征索引
-        self.__load_face_indexes()
+        self.__load_face_indexed_json()
         os.makedirs(audio_db_path, exist_ok=True)
         audios_path = []
         for name in os.listdir(audio_db_path):
@@ -152,7 +153,7 @@ class MVectorPredictor:
                 self.audio_feature = np.vstack((self.audio_feature, features))
         assert len(self.audio_feature) == len(self.users_name) == len(self.users_audio_path), '加载的数量对不上！'
         # 将声纹特征保存到索引文件中
-        self.__write_index()
+        self.__write_index_json()
         logger.info('声纹库数据加载完成！')
 
     # 声纹检索
@@ -304,7 +305,7 @@ class MVectorPredictor:
         input_data.to_wav_file(audio_path)
         self.users_audio_path.append(audio_path.replace('\\', '/'))
         self.users_name.append(user_name)
-        self.__write_index()
+        self.__write_index_json()
         return True, "注册成功"
 
     # 声纹识别
